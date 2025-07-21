@@ -14,6 +14,7 @@
 
 from .config import RewardConfig
 from .function import BatchFunctionRewardManager, FunctionRewardManager, SequentialFunctionRewardManager
+from .llm_judge import LLMJudgeRewardManager
 
 
-__all__ = ["BatchFunctionRewardManager", "FunctionRewardManager", "RewardConfig", "SequentialFunctionRewardManager"]
+__all__ = ["BatchFunctionRewardManager", "FunctionRewardManager", "RewardConfig", "SequentialFunctionRewardManager", "LLMJudgeRewardManager"]

@@ -27,6 +27,9 @@ class RewardConfig:
     reward_function_kwargs: dict = field(default_factory=dict)
     skip_special_tokens: bool = True
     num_cpus: int = 1
+    # LLM judge specific configs
+    judge_model_path: Optional[str] = None
+    judge_template: Optional[str] = None
     # below are auto keys
     reward_function_name: Optional[str] = field(default=None, init=False)
     diffusion: bool = False

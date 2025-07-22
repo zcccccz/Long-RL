@@ -37,6 +37,9 @@ class RolloutConfig:
     max_model_len: Optional[int] = None
     max_num_batched_tokens: int = 8192
     disable_log_stats: bool = True
+    # Add new configuration options
+    load_format: Optional[str] = None  # Can be "auto", "dummy", "safetensors", etc.
+    distributed_executor_backend: Optional[str] = None  # Can be "external_launcher", "mp", "ray", etc.
     val_override_config: Dict[str, Any] = field(default_factory=dict)
     # below are auto keys
     prompt_length: int = field(default=-1, init=False)

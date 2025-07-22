@@ -99,6 +99,19 @@ class vLLMRollout(BaseRollout):
         self.rank = int(os.getenv("RANK", "0"))
         self.config = config
         self.pad_token_id = tokenizer.pad_token_id
+        
+        # Add debugging information
+        print(f"[DEBUG] Rank: {self.rank}")
+        print(f"[DEBUG] WORLD_SIZE: {os.getenv('WORLD_SIZE', 'NOT_SET')}")
+        print(f"[DEBUG] LOCAL_RANK: {os.getenv('LOCAL_RANK', 'NOT_SET')}")
+        print(f"[DEBUG] MASTER_ADDR: {os.getenv('MASTER_ADDR', 'NOT_SET')}")
+        print(f"[DEBUG] MASTER_PORT: {os.getenv('MASTER_PORT', 'NOT_SET')}")
+        print(f"[DEBUG] torch.distributed.is_initialized(): {torch.distributed.is_initialized()}")
+        if torch.distributed.is_initialized():
+            print(f"[DEBUG] torch.distributed.get_world_size(): {torch.distributed.get_world_size()}")
+            print(f"[DEBUG] torch.distributed.get_rank(): {torch.distributed.get_rank()}")
+        print(f"[DEBUG] config.tensor_parallel_size: {config.tensor_parallel_size}")
+        
         if config.tensor_parallel_size > torch.distributed.get_world_size():
             raise ValueError("Tensor parallelism size should be less than world size.")
 
@@ -134,24 +147,58 @@ class vLLMRollout(BaseRollout):
                 engine_kwargs["max_model_len"] += config.audio_max_length
                 engine_kwargs["limit_mm_per_prompt"] = {"audio": 1, "video": 1}
 
-        self.inference_engine = LLM(
-            model=model_path,
-            skip_tokenizer_init=False,
-            trust_remote_code=config.trust_remote_code,
-            load_format="dummy",
-            dtype=PrecisionType.to_str(PrecisionType.to_dtype(config.dtype)),
-            seed=config.seed,
-            distributed_executor_backend="external_launcher",
-            tensor_parallel_size=config.tensor_parallel_size,
-            gpu_memory_utilization=config.gpu_memory_utilization,
-            max_num_batched_tokens=config.max_num_batched_tokens,
-            disable_log_stats=config.disable_log_stats,
-            enforce_eager=config.enforce_eager,
-            disable_custom_all_reduce=True,
-            enable_chunked_prefill=config.enable_chunked_prefill,
-            enable_sleep_mode=True,
+        print(f"[DEBUG] About to initialize vLLM with:")
+        print(f"[DEBUG] - model_path: {model_path}")
+        print(f"[DEBUG] - tensor_parallel_size: {config.tensor_parallel_size}")
+        print(f"[DEBUG] - distributed_executor_backend: external_launcher")
+        print(f"[DEBUG] - engine_kwargs: {engine_kwargs}")
+
+        # Try different configurations to avoid hanging
+        vllm_kwargs = {
+            "model": model_path,
+            "skip_tokenizer_init": False,
+            "trust_remote_code": config.trust_remote_code,
+            "dtype": PrecisionType.to_str(PrecisionType.to_dtype(config.dtype)),
+            "seed": config.seed,
+            "tensor_parallel_size": config.tensor_parallel_size,
+            "gpu_memory_utilization": config.gpu_memory_utilization,
+            "max_num_batched_tokens": config.max_num_batched_tokens,
+            "disable_log_stats": config.disable_log_stats,
+            "enforce_eager": config.enforce_eager,
+            "disable_custom_all_reduce": True,
+            "enable_chunked_prefill": config.enable_chunked_prefill,
+            "enable_sleep_mode": True,
             **engine_kwargs,
-        )
+        }
+        
+        # Use different load_format if dummy causes issues
+        if hasattr(config, 'load_format') and config.load_format:
+            vllm_kwargs["load_format"] = config.load_format
+        else:
+            # Change from "dummy" to "auto" which is more reliable
+            vllm_kwargs["load_format"] = "auto"
+        
+        # Use different distributed backend if external_launcher hangs
+        if hasattr(config, 'distributed_executor_backend') and config.distributed_executor_backend:
+            vllm_kwargs["distributed_executor_backend"] = config.distributed_executor_backend
+            print(f"[DEBUG] Using configured distributed_executor_backend: {config.distributed_executor_backend}")
+        elif torch.distributed.is_initialized() and torch.distributed.get_world_size() > 1:
+            # If torch.distributed is already initialized, use ray backend
+            vllm_kwargs["distributed_executor_backend"] = "ray"
+            print(f"[DEBUG] Using ray backend since torch.distributed is initialized")
+        else:
+            # For single node multi-GPU, try mp backend first
+            if config.tensor_parallel_size > 1:
+                vllm_kwargs["distributed_executor_backend"] = "mp"
+                print(f"[DEBUG] Using mp backend for single node multi-GPU setup")
+            else:
+                # For single GPU, no distributed backend needed
+                vllm_kwargs.pop("distributed_executor_backend", None)
+                print(f"[DEBUG] Single GPU setup, no distributed backend needed")
+
+        self.inference_engine = LLM(**vllm_kwargs)
+
+        print(f"[DEBUG] vLLM initialization completed successfully on rank {self.rank}")
 
         # Offload vllm model to reduce peak memory usage
         self.inference_engine.sleep(level=1)

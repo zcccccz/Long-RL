@@ -14,6 +14,8 @@
 
 from .config import RewardConfig
 from .function import BatchFunctionRewardManager, FunctionRewardManager, SequentialFunctionRewardManager
+from .llm_judge import LLMJudgeRewardManager
+from .vllm_judge import VLLMJudgeRewardManager, calculate_available_gpus_for_rl
 
 
-__all__ = ["BatchFunctionRewardManager", "FunctionRewardManager", "RewardConfig", "SequentialFunctionRewardManager"]
+__all__ = ["BatchFunctionRewardManager", "FunctionRewardManager", "RewardConfig", "SequentialFunctionRewardManager", "LLMJudgeRewardManager", "VLLMJudgeRewardManager", "calculate_available_gpus_for_rl"]

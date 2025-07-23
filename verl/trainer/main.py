@@ -21,7 +21,7 @@ from omegaconf import OmegaConf
 from ..single_controller.ray import RayWorkerGroup
 from ..utils.tokenizer import get_processor, get_tokenizer
 from ..workers.fsdp_workers import FSDPWorker
-from ..workers.reward import BatchFunctionRewardManager, SequentialFunctionRewardManager, LLMJudgeRewardManager
+from ..workers.reward import BatchFunctionRewardManager, SequentialFunctionRewardManager, LLMJudgeRewardManager, VLLMJudgeRewardManager, calculate_available_gpus_for_rl
 from .config import PPOConfig
 from .data_loader import create_dataloader
 from .ray_trainer import RayPPOTrainer, ResourcePoolManager, Role
@@ -75,6 +75,16 @@ class Runner:
             RewardManager = BatchFunctionRewardManager
         elif config.worker.reward.reward_type == "llm_judge":
             RewardManager = LLMJudgeRewardManager
+        elif config.worker.reward.reward_type == "vllm_judge":
+            RewardManager = VLLMJudgeRewardManager
+            # Adjust GPU allocation for RL workers
+            judge_gpu_count = getattr(config.worker.reward, 'judge_gpu_count', 1)
+            total_gpus = config.trainer.n_gpus_per_node * config.trainer.nnodes
+            available_gpus_for_rl = calculate_available_gpus_for_rl(total_gpus, judge_gpu_count)
+            
+            # Update resource pool spec to account for judge GPUs
+            print(f"Adjusting RL GPU allocation from {config.trainer.n_gpus_per_node} to {available_gpus_for_rl // config.trainer.nnodes} per node")
+            config.trainer.n_gpus_per_node = available_gpus_for_rl // config.trainer.nnodes
         else:
             raise NotImplementedError(f"Unknown reward type {config.worker.reward.reward_type}.")
 

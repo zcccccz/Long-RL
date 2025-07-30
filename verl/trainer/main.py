@@ -60,9 +60,38 @@ class Runner:
             Role.Critic: ray.remote(FSDPWorker),
         }
         global_pool_id = "global_pool"
-        resource_pool_spec = {
-            global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
-        }
+        
+        # For vLLM judge, we need to reserve GPUs for the judge model
+        # This ensures the distributed training has the correct world_size
+        if config.worker.reward.reward_type == "vllm_judge":
+            judge_gpu_count = getattr(config.worker.reward, 'judge_gpu_count', 1)
+            total_gpus = config.trainer.n_gpus_per_node * config.trainer.nnodes
+            available_gpus_for_rl = total_gpus - judge_gpu_count
+            
+            # Calculate the actual GPU distribution for RL workers
+            base_gpus_per_node = available_gpus_for_rl // config.trainer.nnodes
+            extra_gpus = available_gpus_for_rl % config.trainer.nnodes
+            
+            # Create resource pool spec that reserves GPUs for judge
+            gpu_distribution = []
+            for i in range(config.trainer.nnodes):
+                gpus_for_this_node = base_gpus_per_node + (1 if i < extra_gpus else 0)
+                gpu_distribution.append(gpus_for_this_node)
+            
+            resource_pool_spec = {
+                global_pool_id: gpu_distribution,
+            }
+            
+            print(f"GPU allocation summary:")
+            print(f"  Total GPUs: {total_gpus} ({config.trainer.nnodes} nodes × {config.trainer.n_gpus_per_node} GPUs/node)")
+            print(f"  Judge model GPUs: {judge_gpu_count}")
+            print(f"  RL workers GPUs: {available_gpus_for_rl} distributed as {gpu_distribution}")
+            print(f"  Resource pool spec: {resource_pool_spec}")
+        else:
+            # Standard even distribution
+            resource_pool_spec = {
+                global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
+            }
         mapping = {
             Role.ActorRolloutRef: global_pool_id,
             Role.Critic: global_pool_id,
@@ -77,14 +106,8 @@ class Runner:
             RewardManager = LLMJudgeRewardManager
         elif config.worker.reward.reward_type == "vllm_judge":
             RewardManager = VLLMJudgeRewardManager
-            # Adjust GPU allocation for RL workers
-            judge_gpu_count = getattr(config.worker.reward, 'judge_gpu_count', 1)
-            total_gpus = config.trainer.n_gpus_per_node * config.trainer.nnodes
-            available_gpus_for_rl = calculate_available_gpus_for_rl(total_gpus, judge_gpu_count)
-            
-            # Update resource pool spec to account for judge GPUs
-            print(f"Adjusting RL GPU allocation from {config.trainer.n_gpus_per_node} to {available_gpus_for_rl // config.trainer.nnodes} per node")
-            config.trainer.n_gpus_per_node = available_gpus_for_rl // config.trainer.nnodes
+            # GPU allocation is handled automatically by Ray
+            # Judge model and RL workers will share the available GPU resources
         else:
             raise NotImplementedError(f"Unknown reward type {config.worker.reward.reward_type}.")
 

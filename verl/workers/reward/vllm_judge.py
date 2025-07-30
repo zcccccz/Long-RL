@@ -180,6 +180,7 @@ class VLLMJudgeRewardManager(FunctionRewardManager):
         judge_max_model_len = getattr(config, 'judge_max_model_len', 4096)
         
         # Initialize vLLM judge worker with specified GPU count
+        # The judge worker will automatically be allocated to available GPUs by Ray
         self.judge_worker = VLLMJudgeWorker.options(
             num_gpus=judge_gpu_count
         ).remote(
@@ -273,6 +274,10 @@ def calculate_available_gpus_for_rl(total_gpus: int, judge_gpu_count: int) -> in
     available_gpus = total_gpus - judge_gpu_count
     if available_gpus <= 0:
         raise ValueError(f"Not enough GPUs. Total: {total_gpus}, Judge needs: {judge_gpu_count}")
+    
+    # Ensure we have enough GPUs for meaningful RL training
+    if available_gpus < 2:
+        raise ValueError(f"Insufficient GPUs for RL training. Available: {available_gpus}, minimum required: 2")
     
     print(f"GPU allocation - Total: {total_gpus}, Judge: {judge_gpu_count}, RL: {available_gpus}")
     return available_gpus

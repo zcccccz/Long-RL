@@ -61,24 +61,32 @@ class Runner:
         }
         global_pool_id = "global_pool"
         
-        # For vLLM judge, we keep the original GPU allocation for RL workers
-        # The judge model will be deployed separately and won't interfere with RL training
+        # For vLLM judge, we need to reserve GPUs for the judge model
+        # This ensures the distributed training has the correct world_size
         if config.worker.reward.reward_type == "vllm_judge":
             judge_gpu_count = getattr(config.worker.reward, 'judge_gpu_count', 1)
             total_gpus = config.trainer.n_gpus_per_node * config.trainer.nnodes
             available_gpus_for_rl = total_gpus - judge_gpu_count
             
-            # Keep the original even distribution for RL workers
-            # The judge model will be deployed on available GPUs outside this resource pool
+            # Calculate the actual GPU distribution for RL workers
+            base_gpus_per_node = available_gpus_for_rl // config.trainer.nnodes
+            extra_gpus = available_gpus_for_rl % config.trainer.nnodes
+            
+            # Create resource pool spec that reserves GPUs for judge
+            gpu_distribution = []
+            for i in range(config.trainer.nnodes):
+                gpus_for_this_node = base_gpus_per_node + (1 if i < extra_gpus else 0)
+                gpu_distribution.append(gpus_for_this_node)
+            
             resource_pool_spec = {
-                global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
+                global_pool_id: gpu_distribution,
             }
             
             print(f"GPU allocation summary:")
             print(f"  Total GPUs: {total_gpus} ({config.trainer.nnodes} nodes × {config.trainer.n_gpus_per_node} GPUs/node)")
-            print(f"  Judge model GPUs: {judge_gpu_count} (deployed separately)")
-            print(f"  RL training uses original resource pool: {resource_pool_spec[global_pool_id]}")
-            print(f"  Note: Judge model and RL workers will share GPU resources automatically managed by Ray")
+            print(f"  Judge model GPUs: {judge_gpu_count}")
+            print(f"  RL workers GPUs: {available_gpus_for_rl} distributed as {gpu_distribution}")
+            print(f"  Resource pool spec: {resource_pool_spec}")
         else:
             # Standard even distribution
             resource_pool_spec = {

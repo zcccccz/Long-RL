@@ -180,16 +180,40 @@ class VLLMJudgeRewardManager(FunctionRewardManager):
         judge_max_model_len = getattr(config, 'judge_max_model_len', 4096)
         
         # Initialize vLLM judge worker with specified GPU count
-        # The judge worker will automatically be allocated to available GPUs by Ray
-        self.judge_worker = VLLMJudgeWorker.options(
-            num_gpus=judge_gpu_count
-        ).remote(
-            model_path=judge_model_path,
-            judge_gpu_count=judge_gpu_count,
-            gpu_memory_utilization=judge_gpu_memory_utilization,
-            max_model_len=judge_max_model_len,
-            trust_remote_code=True
-        )
+        # Use scheduling strategy to avoid conflicts with RL workers' placement groups
+        from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+        import ray
+        
+        # Get available nodes and use the first one for judge model
+        nodes = ray.nodes()
+        available_nodes = [node for node in nodes if node['Alive'] and node['Resources'].get('GPU', 0) > 0]
+        
+        if available_nodes:
+            # Use node affinity to place judge model on a specific node
+            node_id = available_nodes[0]['NodeID']
+            scheduling_strategy = NodeAffinitySchedulingStrategy(node_id=node_id, soft=True)
+            
+            self.judge_worker = VLLMJudgeWorker.options(
+                num_gpus=judge_gpu_count,
+                scheduling_strategy=scheduling_strategy
+            ).remote(
+                model_path=judge_model_path,
+                judge_gpu_count=judge_gpu_count,
+                gpu_memory_utilization=judge_gpu_memory_utilization,
+                max_model_len=judge_max_model_len,
+                trust_remote_code=True
+            )
+        else:
+            # Fallback to default scheduling if no nodes found
+            self.judge_worker = VLLMJudgeWorker.options(
+                num_gpus=judge_gpu_count
+            ).remote(
+                model_path=judge_model_path,
+                judge_gpu_count=judge_gpu_count,
+                gpu_memory_utilization=judge_gpu_memory_utilization,
+                max_model_len=judge_max_model_len,
+                trust_remote_code=True
+            )
         
         # Store GPU count for resource management
         self.judge_gpu_count = judge_gpu_count

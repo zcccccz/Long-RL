@@ -16,8 +16,10 @@
 - **总GPU数量**: 16个GPU
 
 ### GPU分配策略
-- **Judge模型**: 1个GPU (由Ray自动分配到某个节点)
-- **RL Workers**: 15个GPU，分布为 [8, 7] 跨2个节点
+- **总GPU资源**: 16个GPU由Ray统一管理
+- **Judge模型**: 1个GPU (由Ray自动分配)
+- **RL Workers**: 使用剩余可用的GPU资源进行训练
+- **资源共享**: Judge模型和RL workers共享GPU资源池，Ray自动调度
 
 ### 配置文件
 
@@ -39,27 +41,26 @@ worker:
 
 ## GPU分配逻辑
 
-### 自动分配机制
+### Ray自动资源管理
 
-系统会自动处理GPU分配：
+系统采用Ray的自动资源管理机制：
 
-1. **总GPU计算**: `total_gpus = nnodes × n_gpus_per_node = 2 × 8 = 16`
-2. **RL可用GPU**: `available_gpus_for_rl = total_gpus - judge_gpu_count = 16 - 1 = 15`
-3. **节点分布计算**:
-   - `base_gpus_per_node = 15 // 2 = 7`
-   - `extra_gpus = 15 % 2 = 1`
-   - 第一个节点: `7 + 1 = 8` 个GPU
-   - 第二个节点: `7 + 0 = 7` 个GPU
+1. **资源池配置**: RL训练使用标准的资源池配置
+   ```python
+   resource_pool_spec = {
+       "global_pool": [8, 8]  # 每个节点8个GPU
+   }
+   ```
 
-### 资源池规格
+2. **Judge模型部署**: 
+   - Judge模型作为独立的Ray Actor部署
+   - 使用 `num_gpus=1` 参数请求1个GPU
+   - Ray自动从可用GPU中分配资源
 
-系统会自动生成以下资源池配置：
-
-```python
-resource_pool_spec = {
-    "global_pool": [8, 7]  # 节点0: 8个GPU, 节点1: 7个GPU
-}
-```
+3. **资源共享**: 
+   - Judge模型和RL workers共享GPU资源池
+   - Ray根据实际需求动态分配GPU
+   - 避免资源冲突和死锁
 
 ## 运行示例
 
@@ -77,9 +78,9 @@ python -m verl.trainer.main --config examples/config_vllm_judge_2nodes.yaml
 ```
 GPU allocation summary:
   Total GPUs: 16 (2 nodes × 8 GPUs/node)
-  Judge model GPUs: 1
-  Available GPUs for RL: 15
-RL GPU distribution across nodes: [8, 7]
+  Judge model GPUs: 1 (deployed separately)
+  RL training uses original resource pool: [8, 8]
+  Note: Judge model and RL workers will share GPU resources automatically managed by Ray
 VLLMJudgeRewardManager initialized with 1 GPUs for judge model
 ```
 
@@ -95,7 +96,7 @@ worker:
     judge_gpu_count: 2  # 使用2个GPU for judge
 ```
 
-这种情况下，RL workers将获得14个GPU，分布为 [7, 7]。
+这种情况下，Judge模型将使用2个GPU，RL workers将使用剩余的可用GPU资源。
 
 ### 不同节点配置
 
@@ -107,10 +108,10 @@ trainer:
   n_gpus_per_node: 4     # 每个节点4个GPU
 ```
 
-系统会自动计算并分配：
+系统会自动管理资源：
 - 总GPU: 16个
-- Judge: 1个GPU  
-- RL: 15个GPU，分布为 [4, 4, 4, 3]
+- Judge: 1个GPU (Ray自动分配)
+- RL: 使用标准资源池 [4, 4, 4, 4]，与Judge模型共享GPU资源
 
 ## 验证配置
 
@@ -126,8 +127,8 @@ python3 simple_test_gpu_allocation.py
 
 Expected behavior:
 - Judge model: 1 GPU (automatically allocated by Ray)
-- RL workers: 15 GPUs distributed as [8, 7] across 2 nodes
-- Total: 16 GPUs (2 nodes × 8 GPUs/node)
+- RL workers: Share GPU resources with judge model
+- Total: 16 GPUs (2 nodes × 8 GPUs/node) managed by Ray
 ```
 
 ## 注意事项
@@ -145,9 +146,10 @@ Expected behavior:
 - 配置文件中的GPU设置
 - 是否有其他任务占用GPU
 
-### 不均匀分配
-系统会自动处理不均匀的GPU分配。例如：
-- 15个GPU分配到2个节点 → [8, 7]
-- 14个GPU分配到3个节点 → [5, 5, 4]
+### 资源共享
+系统采用Ray的自动资源管理，避免了手动GPU分配的复杂性：
+- Judge模型和RL workers共享GPU资源池
+- Ray根据实际需求动态分配GPU
+- 避免了固定分配导致的资源浪费或冲突
 
-这是正常行为，不会影响训练效果。
+这种方式更加灵活和高效。

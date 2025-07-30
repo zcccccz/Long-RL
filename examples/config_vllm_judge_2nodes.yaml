@@ -114,7 +114,7 @@ trainer:
   logger: ["console", "wandb"]
   nnodes: 2  # 使用2个节点
   n_gpus_per_node: 8  # 每个节点8个GPU，总共16个GPU
-  # 系统会自动分配：1个GPU给judge，剩余15个GPU给RL workers (每个节点7.5个，实际为7和8个)
+  # Ray会自动管理GPU资源：judge模型和RL workers共享16个GPU
   max_try_make_batch: 20
   val_freq: 5
   val_before_train: true
